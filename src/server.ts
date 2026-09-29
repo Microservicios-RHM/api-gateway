@@ -27,12 +27,17 @@ app.use(
   createServiceProxy('/departamentos', departamentosServiceUrl),
 );
 
-app.use((_request, response) => {
+app.use((request, response) => {
   response.status(404).json({
     success: false,
     message: 'Recurso no encontrado',
     data: null,
-    error: { code: 'RESOURCE_NOT_FOUND' },
+    error: {
+      code: 'RESOURCE_NOT_FOUND',
+      status: 404,
+      path: request.originalUrl,
+      timestamp: new Date().toISOString(),
+    },
   });
 });
 
@@ -48,7 +53,7 @@ function createServiceProxy(path: string, target: string): RequestHandler {
     on: {
       error: (error, request, response) => {
         console.error(`Upstream unavailable for ${request.url}: ${error.message}`);
-        sendUnavailable(response);
+        sendUnavailable(response, request.url ?? '/');
       },
     },
   };
@@ -56,14 +61,19 @@ function createServiceProxy(path: string, target: string): RequestHandler {
   return createProxyMiddleware(options) as RequestHandler;
 }
 
-function sendUnavailable(response: unknown): void {
+function sendUnavailable(response: unknown, path: string): void {
   const httpResponse = response as Response;
   if (httpResponse.headersSent) return;
   httpResponse.status(503).json({
     success: false,
     message: 'Servicio upstream no disponible',
     data: null,
-    error: { code: 'UPSTREAM_SERVICE_UNAVAILABLE' },
+    error: {
+      code: 'UPSTREAM_SERVICE_UNAVAILABLE',
+      status: 503,
+      path,
+      timestamp: new Date().toISOString(),
+    },
   });
 }
 
