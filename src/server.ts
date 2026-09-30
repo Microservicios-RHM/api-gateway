@@ -10,6 +10,18 @@ const departamentosServiceUrl = requireUrl(
   process.env.DEPARTAMENTOS_SERVICE_URL,
   'DEPARTAMENTOS_SERVICE_URL',
 );
+const notificacionesServiceUrl = requireUrl(
+  process.env.NOTIFICACIONES_SERVICE_URL,
+  'NOTIFICACIONES_SERVICE_URL',
+);
+const perfilesServiceUrl = requireUrl(
+  process.env.PERFILES_SERVICE_URL,
+  'PERFILES_SERVICE_URL',
+);
+const vacacionesServiceUrl = requireUrl(
+  process.env.VACACIONES_SERVICE_URL,
+  'VACACIONES_SERVICE_URL',
+);
 
 const app = express();
 
@@ -25,6 +37,9 @@ app.get('/health', (_request, response) => {
 app.use(
   createServiceProxy('/empleados', empleadosServiceUrl),
   createServiceProxy('/departamentos', departamentosServiceUrl),
+  createServiceProxy('/notificaciones', notificacionesServiceUrl),
+  createServiceProxy('/perfiles', perfilesServiceUrl),
+  createServiceProxy('/vacaciones', vacacionesServiceUrl),
 );
 
 app.use((request, response) => {
