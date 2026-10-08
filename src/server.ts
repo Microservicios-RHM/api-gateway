@@ -1,5 +1,7 @@
 import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
+import { createAuthGuard } from './security.ts';
+import { sendErrorResponse } from './responses.ts';
 
 const port = parsePort(process.env.PORT);
 const empleadosServiceUrl = requireUrl(
@@ -22,6 +24,11 @@ const vacacionesServiceUrl = requireUrl(
   process.env.VACACIONES_SERVICE_URL,
   'VACACIONES_SERVICE_URL',
 );
+const authServiceUrl = requireUrl(process.env.AUTH_SERVICE_URL, 'AUTH_SERVICE_URL');
+const security = {
+  secret: requireSecret(process.env.JWT_SECRET),
+  issuer: process.env.JWT_ISSUER ?? 'auth-service',
+};
 
 const app = express();
 
@@ -34,7 +41,10 @@ app.get('/health', (_request, response) => {
   });
 });
 
+app.use(createAuthGuard(security));
+
 app.use(
+  createServiceProxy('/auth', authServiceUrl),
   createServiceProxy('/empleados', empleadosServiceUrl),
   createServiceProxy('/departamentos', departamentosServiceUrl),
   createServiceProxy('/notificaciones', notificacionesServiceUrl),
@@ -43,17 +53,13 @@ app.use(
 );
 
 app.use((request, response) => {
-  response.status(404).json({
-    success: false,
-    message: 'Recurso no encontrado',
-    data: null,
-    error: {
-      code: 'RESOURCE_NOT_FOUND',
-      status: 404,
-      path: request.originalUrl,
-      timestamp: new Date().toISOString(),
-    },
-  });
+  sendErrorResponse(
+    response,
+    404,
+    'Recurso no encontrado',
+    'RESOURCE_NOT_FOUND',
+    request.originalUrl,
+  );
 });
 
 app.listen(port, '0.0.0.0', () => {
@@ -77,19 +83,13 @@ function createServiceProxy(path: string, target: string): RequestHandler {
 }
 
 function sendUnavailable(response: unknown, path: string): void {
-  const httpResponse = response as Response;
-  if (httpResponse.headersSent) return;
-  httpResponse.status(503).json({
-    success: false,
-    message: 'Servicio upstream no disponible',
-    data: null,
-    error: {
-      code: 'UPSTREAM_SERVICE_UNAVAILABLE',
-      status: 503,
-      path,
-      timestamp: new Date().toISOString(),
-    },
-  });
+  sendErrorResponse(
+    response as Response,
+    503,
+    'Servicio upstream no disponible',
+    'UPSTREAM_SERVICE_UNAVAILABLE',
+    path,
+  );
 }
 
 function parsePort(value: string | undefined): number {
@@ -98,6 +98,12 @@ function parsePort(value: string | undefined): number {
     throw new Error('PORT debe ser un número entero entre 1 y 65535');
   }
   return parsed;
+}
+
+function requireSecret(value: string | undefined): string {
+  if (!value) throw new Error('Falta la variable de entorno JWT_SECRET');
+  if (value.length < 16) throw new Error('JWT_SECRET debe tener al menos 16 caracteres');
+  return value;
 }
 
 function requireUrl(value: string | undefined, name: string): string {
