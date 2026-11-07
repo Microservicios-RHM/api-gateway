@@ -1,7 +1,10 @@
 import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
+import swaggerUi from 'swagger-ui-express';
+import { Counter, Registry, collectDefaultMetrics } from 'prom-client';
 import { createAuthGuard } from './security.ts';
 import { sendErrorResponse } from './responses.ts';
+import { openApiDocument } from './openapi.ts';
 
 const port = parsePort(process.env.PORT);
 const empleadosServiceUrl = requireUrl(
@@ -31,8 +34,26 @@ const security = {
 };
 
 const app = express();
+const metricsRegistry = new Registry();
+collectDefaultMetrics({ register: metricsRegistry, prefix: 'rhm_gateway_' });
+const httpRequests = new Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests handled by the Gateway',
+  labelNames: ['service', 'method', 'status'] as const,
+  registers: [metricsRegistry],
+});
 
 app.disable('x-powered-by');
+app.use((request, response, next) => {
+  response.on('finish', () => httpRequests.inc({ service: 'api-gateway', method: request.method, status: String(response.statusCode) }));
+  next();
+});
+app.get('/metrics', async (_request, response) => {
+  response.setHeader('Content-Type', metricsRegistry.contentType);
+  response.send(await metricsRegistry.metrics());
+});
+app.get('/openapi.json', (_request, response) => response.json(openApiDocument));
+app.use('/swagger', swaggerUi.serve, swaggerUi.setup(openApiDocument));
 app.get('/health', (_request, response) => {
   response.status(200).json({
     success: true,
