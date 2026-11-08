@@ -5,9 +5,13 @@ pipeline {
   environment { SERVICE = 'api-gateway'; IMAGE = 'rhm/api-gateway' }
   stages {
     stage('Checkout') { steps { checkout scm; script { env.IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()}" } } }
-    stage('Build and test') {
+    stage('Build') {
       agent { docker { image 'node:24-alpine'; reuseNode true } }
-      steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run typecheck'; sh 'npm run build'; sh 'npm run test:ci' }
+      steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run typecheck'; sh 'npm run build' }
+    }
+    stage('Test') {
+      agent { docker { image 'node:24-alpine'; reuseNode true } }
+      steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run test:ci' }
     }
     stage('Secret scan') { steps { sh 'docker run --rm -v "$PWD:/src" zricethezav/gitleaks:v8.24.0 detect --source /src --no-git --redact' } }
     stage('SonarQube') {
