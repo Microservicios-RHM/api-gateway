@@ -27,7 +27,7 @@ pipeline {
       steps {
         dir('.e2e') { deleteDir() }
         dir('.e2e') {
-          sh '''repo="$RHM_GIT_BASE_URL/rhm-database-infrastructure.git"; branch=''; git ls-remote --exit-code --heads "$repo" "$RHM_GIT_BRANCH" >/dev/null 2>&1 && branch="--branch $RHM_GIT_BRANCH"; git clone --quiet --depth 1 $branch "$repo" rhm-database-infrastructure; sh rhm-database-infrastructure/ci/checkout-stack.sh'''
+          sh '''repo="$RHM_GIT_BASE_URL/rhm-database-infrastructure.git"; branch=''; git ls-remote --exit-code --heads "$repo" "$RHM_GIT_BRANCH" >/dev/null 2>&1 && branch="--branch $RHM_GIT_BRANCH"; git clone --quiet --depth 1 $branch "$repo" rhm-database-infrastructure; sh rhm-database-infrastructure/ci/checkout-stack.sh; SECRETS_DIR=rhm-database-infrastructure/secrets sh rhm-database-infrastructure/scripts/setup-secrets.sh'''
           writeFile file: 'service-under-test.yml', text: """\
             services:
               ${env.COMPOSE_SERVICE}:
