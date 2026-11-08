@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
 import swaggerUi from 'swagger-ui-express';
@@ -8,6 +9,7 @@ import { createAuthGuard } from './security.ts';
 import { sendErrorResponse } from './responses.ts';
 import { openApiDocument } from './openapi.ts';
 
+const jwtSecret = process.env.JWT_SECRET || readSecretFile(process.env.JWT_SECRET_FILE);
 const port = parsePort(process.env.PORT);
 startTelemetry();
 const empleadosServiceUrl = requireUrl(
@@ -32,7 +34,7 @@ const vacacionesServiceUrl = requireUrl(
 );
 const authServiceUrl = requireUrl(process.env.AUTH_SERVICE_URL, 'AUTH_SERVICE_URL');
 const security = {
-  secret: requireSecret(process.env.JWT_SECRET),
+  secret: requireSecret(jwtSecret),
   issuer: process.env.JWT_ISSUER ?? 'auth-service',
 };
 
@@ -161,6 +163,10 @@ function requireSecret(value: string | undefined): string {
   if (!value) throw new Error('Falta la variable de entorno JWT_SECRET');
   if (value.length < 16) throw new Error('JWT_SECRET debe tener al menos 16 caracteres');
   return value;
+}
+
+function readSecretFile(path: string | undefined): string | undefined {
+  return path ? readFileSync(path, 'utf8').trim() : undefined;
 }
 
 function requireUrl(value: string | undefined, name: string): string {
