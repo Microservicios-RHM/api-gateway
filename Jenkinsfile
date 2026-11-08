@@ -9,7 +9,7 @@ pipeline {
       agent { docker { image 'node:24-alpine'; reuseNode true } }
       steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run typecheck'; sh 'npm run build'; sh 'npm run test:ci' }
     }
-    stage('Secret scan') { steps { sh 'docker run --rm -v "$PWD:/src" zricethezav/gitleaks:8.24.0 detect --source /src --no-git --redact' } }
+    stage('Secret scan') { steps { sh 'docker run --rm -v "$PWD:/src" zricethezav/gitleaks:v8.24.0 detect --source /src --no-git --redact' } }
     stage('SonarQube') {
       agent { docker { image 'sonarsource/sonar-scanner-cli:11'; reuseNode true; args "--network ${env.RHM_CI_NETWORK}" } }
       steps { withSonarQubeEnv('sonarqube') { sh 'sonar-scanner -Dsonar.projectKey=rhm-api-gateway -Dsonar.sources=src -Dsonar.tests=tests' } }
