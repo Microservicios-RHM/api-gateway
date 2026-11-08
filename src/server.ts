@@ -72,12 +72,25 @@ app.get('/metrics', async (_request, response) => {
 });
 app.get('/openapi.json', (_request, response) => response.json(openApiDocument));
 app.use('/swagger', swaggerUi.serve, swaggerUi.setup(openApiDocument));
-app.get('/health', (_request, response) => {
-  response.status(200).json({
-    success: true,
-    message: 'API Gateway disponible',
-    data: { status: 'UP' },
-  });
+app.get('/health', async (_request, response) => {
+  const dependencies = {
+    empleados: empleadosServiceUrl,
+    departamentos: departamentosServiceUrl,
+    notificaciones: notificacionesServiceUrl,
+    perfiles: perfilesServiceUrl,
+    vacaciones: vacacionesServiceUrl,
+    auth: authServiceUrl,
+  };
+  const checks = Object.fromEntries(await Promise.all(Object.entries(dependencies).map(async ([name, url]) => {
+    try {
+      const result = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2_000) });
+      return [name, result.ok ? 'UP' : 'DOWN'];
+    } catch {
+      return [name, 'DOWN'];
+    }
+  }))) as Record<string, 'UP' | 'DOWN'>;
+  const status = Object.values(checks).every((value) => value === 'UP') ? 'UP' : 'DOWN';
+  response.status(status === 'UP' ? 200 : 503).json({ status, service: 'api-gateway', checks });
 });
 
 app.use(createAuthGuard(security));
