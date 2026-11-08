@@ -8,7 +8,9 @@
     "dev": "node --watch --experimental-strip-types src/server.ts",
     "build": "tsc",
     "start": "node dist/server.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types tests/**/*.test.ts",
+    "test:ci": "node --test --experimental-strip-types --experimental-test-coverage --test-coverage-lines=70 --test-coverage-include=\"src/security.ts\" --test-coverage-include=\"src/responses.ts\" tests/**/*.test.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.1",
