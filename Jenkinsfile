@@ -1,5 +1,6 @@
 pipeline {
   agent any
+  parameters { booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Ejecutar pruebas E2E completas') }
   options { skipDefaultCheckout(); timestamps(); disableConcurrentBuilds(); timeout(time: 45, unit: 'MINUTES') }
   triggers { pollSCM('H/5 * * * *') }
   environment { SERVICE = 'api-gateway'; COMPOSE_SERVICE = 'api-gateway'; IMAGE = 'rhm/api-gateway' }
@@ -23,6 +24,7 @@ pipeline {
     stage('Package') { steps { sh 'docker build -t "$IMAGE:$IMAGE_TAG" -t "$IMAGE:latest" .' } }
     stage('Publish') { steps { sh 'docker tag "$IMAGE:$IMAGE_TAG" "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker tag "$IMAGE:latest" "$RHM_REGISTRY/$IMAGE:latest"; docker push "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker push "$RHM_REGISTRY/$IMAGE:latest"' } }
     stage('E2E Tests') {
+      when { expression { params.RUN_E2E } }
       environment { COMPOSE_PROJECT_NAME = "rhm-e2e-${env.SERVICE}"; COMPOSE_FILE = 'docker-compose.yml:ci/docker-compose.e2e.yml:../service-under-test.yml'; E2E_ADMIN = credentials('e2e-admin') }
       steps {
         dir('.e2e') { deleteDir() }
