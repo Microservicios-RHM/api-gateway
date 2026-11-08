@@ -2,11 +2,14 @@ import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
 import swaggerUi from 'swagger-ui-express';
 import { Counter, Registry, collectDefaultMetrics } from 'prom-client';
+import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
+import { startTelemetry } from './telemetry.ts';
 import { createAuthGuard } from './security.ts';
 import { sendErrorResponse } from './responses.ts';
 import { openApiDocument } from './openapi.ts';
 
 const port = parsePort(process.env.PORT);
+startTelemetry();
 const empleadosServiceUrl = requireUrl(
   process.env.EMPLEADOS_SERVICE_URL,
   'EMPLEADOS_SERVICE_URL',
@@ -44,6 +47,21 @@ const httpRequests = new Counter({
 });
 
 app.disable('x-powered-by');
+app.use((request, response, next) => {
+  const extractedContext = propagation.extract(context.active(), request.headers);
+  trace.getTracer('api-gateway').startActiveSpan(
+    `${request.method} ${request.path}`,
+    { kind: SpanKind.SERVER, attributes: { 'http.request.method': request.method, 'url.path': request.path } },
+    extractedContext,
+    (span) => {
+      response.on('finish', () => {
+        span.setAttribute('http.response.status_code', response.statusCode);
+        span.end();
+      });
+      next();
+    },
+  );
+});
 app.use((request, response, next) => {
   response.on('finish', () => httpRequests.inc({ service: 'api-gateway', method: request.method, status: String(response.statusCode) }));
   next();
@@ -93,6 +111,11 @@ function createServiceProxy(path: string, target: string): RequestHandler {
     changeOrigin: true,
     pathFilter: path,
     on: {
+      proxyReq: (proxyRequest) => {
+        const headers: Record<string, string> = {};
+        propagation.inject(context.active(), headers);
+        for (const [name, value] of Object.entries(headers)) proxyRequest.setHeader(name, value);
+      },
       error: (error, request, response) => {
         console.error(`Upstream unavailable for ${request.url}: ${error.message}`);
         sendUnavailable(response, request.url ?? '/');
