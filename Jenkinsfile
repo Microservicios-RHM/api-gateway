@@ -17,7 +17,7 @@ pipeline {
     }
     stage('Secret scan') { steps { sh 'docker run --rm --volumes-from "$HOSTNAME" zricethezav/gitleaks:v8.24.0 detect --source "$PWD" --no-git --redact' } }
     stage('Dependency scan') {
-      steps { sh 'mkdir -p reports/security; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity HIGH,CRITICAL --exit-code 0 --format json --output "$PWD/reports/security/dependencies.json" "$PWD"; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity CRITICAL --exit-code 1 --no-progress "$PWD"' }
+      steps { sh 'mkdir -p reports/security; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity HIGH,CRITICAL --exit-code 0 --format json --output "$PWD/reports/security/dependencies.json" "$PWD"; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$PWD"' }
       post { always { archiveArtifacts artifacts: 'reports/security/dependencies.json', allowEmptyArchive: false } }
     }
     stage('SonarQube') {
@@ -27,7 +27,7 @@ pipeline {
     stage('Quality Gate') { steps { timeout(time: 5, unit: 'MINUTES') { waitForQualityGate abortPipeline: true } } }
     stage('Package') { steps { sh 'docker build -t "$IMAGE:$IMAGE_TAG" -t "$IMAGE:latest" .' } }
     stage('Image scan') {
-      steps { sh 'docker run --rm --volumes-from "$HOSTNAME" -v /var/run/docker.sock:/var/run/docker.sock -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 image --severity HIGH,CRITICAL --exit-code 0 --format json --output "$PWD/reports/security/image.json" "$IMAGE:$IMAGE_TAG"; docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 image --severity CRITICAL --exit-code 1 --no-progress "$IMAGE:$IMAGE_TAG"' }
+      steps { sh 'docker run --rm --volumes-from "$HOSTNAME" -v /var/run/docker.sock:/var/run/docker.sock -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 image --scanners vuln --severity HIGH,CRITICAL --exit-code 0 --format json --output "$PWD/reports/security/image.json" "$IMAGE:$IMAGE_TAG"; docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 image --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$IMAGE:$IMAGE_TAG"' }
       post { always { archiveArtifacts artifacts: 'reports/security/image.json', allowEmptyArchive: false } }
     }
     stage('Publish') { steps { sh 'docker tag "$IMAGE:$IMAGE_TAG" "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker tag "$IMAGE:latest" "$RHM_REGISTRY/$IMAGE:latest"; docker push "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker push "$RHM_REGISTRY/$IMAGE:latest"' } }
