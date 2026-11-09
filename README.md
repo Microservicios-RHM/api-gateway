@@ -360,3 +360,16 @@ lógica adicional. Con esto el Reto 4 queda completo.
 - El Gateway concentra el acceso HTTP externo en el puerto `8080`.
 - Los microservicios mantienen sus puertos HTTP internos y no se publican directamente al host.
 - El Gateway no implementa lógica de negocio ni accede a las bases de datos.
+
+## Observabilidad (Reto 8)
+
+Instrumentación de `api-gateway` para el stack de observabilidad del ecosistema (Prometheus,
+Loki, Zipkin y Grafana). Arquitectura, dashboard, alertas y pruebas de caos en el
+[README de infraestructura](https://github.com/Microservicios-RHM/rhm-database-infrastructure#observabilidad-y-monitoreo-reto-8).
+
+| Pilar | Implementación |
+|---|---|
+| Métricas | `prom-client` — `GET /metrics` (fuera del guard JWT). `route` es el prefijo del servicio de destino (`/empleados`, `/vacaciones`...). Métricas comunes a los 7 servicios: `http_requests_total{method,route,status}`, `http_request_duration_seconds{method,route,status}`, `process_cpu_seconds_total`, `process_resident_memory_bytes`. |
+| Health | `GET /health` consulta el `/health` de los 6 servicios; responde `DOWN` (503) solo si ninguno responde, con el detalle por servicio en `checks`. Formato `{"status":"UP","service":"api-gateway","checks":{...}}`, 200 si todo está UP y 503 si algo está DOWN. |
+| Trazas | `@opentelemetry/sdk-trace` + `instrumentation-http`/`express`/`undici` + `exporter-zipkin` ([src/observability/tracing.ts](src/observability/tracing.ts)), cargado con `node --import`. El Gateway crea el `traceId` de cada petición y lo reenvía en `traceparent` a todos los servicios. Exporta a `OTEL_EXPORTER_ZIPKIN_ENDPOINT` con propagación W3C Trace Context; sin esa variable el tracing queda desactivado. |
+| Logs | `pino` en JSON (reemplaza los `console.log` de texto plano), con `traceId`/`spanId` del span activo. |
