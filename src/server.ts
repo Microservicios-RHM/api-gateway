@@ -1,9 +1,17 @@
+import { readFileSync } from 'node:fs';
 import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
+import swaggerUi from 'swagger-ui-express';
+import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
+import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
+import { startTelemetry } from './telemetry.ts';
 import { createAuthGuard } from './security.ts';
 import { sendErrorResponse } from './responses.ts';
+import { openApiDocument } from './openapi.ts';
 
+const jwtSecret = process.env.JWT_SECRET || readSecretFile(process.env.JWT_SECRET_FILE);
 const port = parsePort(process.env.PORT);
+startTelemetry();
 const empleadosServiceUrl = requireUrl(
   process.env.EMPLEADOS_SERVICE_URL,
   'EMPLEADOS_SERVICE_URL',
@@ -26,19 +34,75 @@ const vacacionesServiceUrl = requireUrl(
 );
 const authServiceUrl = requireUrl(process.env.AUTH_SERVICE_URL, 'AUTH_SERVICE_URL');
 const security = {
-  secret: requireSecret(process.env.JWT_SECRET),
+  secret: requireSecret(jwtSecret),
   issuer: process.env.JWT_ISSUER ?? 'auth-service',
 };
 
 const app = express();
+const metricsRegistry = new Registry();
+collectDefaultMetrics({ register: metricsRegistry, prefix: 'rhm_gateway_' });
+const httpRequests = new Counter({
+  name: 'rhm_http_requests_total',
+  help: 'Total HTTP requests handled by the Gateway',
+  labelNames: ['service', 'method', 'status'] as const,
+  registers: [metricsRegistry],
+});
+const httpDuration = new Histogram({
+  name: 'rhm_http_request_duration_seconds', help: 'HTTP request duration in seconds',
+  labelNames: ['service', 'method', 'status'] as const, registers: [metricsRegistry],
+});
 
 app.disable('x-powered-by');
-app.get('/health', (_request, response) => {
-  response.status(200).json({
-    success: true,
-    message: 'API Gateway disponible',
-    data: { status: 'UP' },
+app.use((request, response, next) => {
+  const extractedContext = propagation.extract(context.active(), request.headers);
+  trace.getTracer('api-gateway').startActiveSpan(
+    `${request.method} ${request.path}`,
+    { kind: SpanKind.SERVER, attributes: { 'http.request.method': request.method, 'url.path': request.path } },
+    extractedContext,
+    (span) => {
+      response.on('finish', () => {
+        span.setAttribute('http.response.status_code', response.statusCode);
+        span.end();
+      });
+      next();
+    },
+  );
+});
+app.use((request, response, next) => {
+  const end = httpDuration.startTimer({ service: 'api-gateway', method: request.method });
+  response.on('finish', () => {
+    const labels = { service: 'api-gateway', method: request.method, status: String(response.statusCode) };
+    httpRequests.inc(labels);
+    end({ status: labels.status });
+    log(response.statusCode >= 500 ? 'error' : 'info', 'HTTP request completed', labels);
   });
+  next();
+});
+app.get('/metrics', async (_request, response) => {
+  response.setHeader('Content-Type', metricsRegistry.contentType);
+  response.send(await metricsRegistry.metrics());
+});
+app.get('/openapi.json', (_request, response) => response.json(openApiDocument));
+app.use('/swagger', swaggerUi.serve, swaggerUi.setup(openApiDocument));
+app.get('/health', async (_request, response) => {
+  const dependencies = {
+    empleados: empleadosServiceUrl,
+    departamentos: departamentosServiceUrl,
+    notificaciones: notificacionesServiceUrl,
+    perfiles: perfilesServiceUrl,
+    vacaciones: vacacionesServiceUrl,
+    auth: authServiceUrl,
+  };
+  const checks = Object.fromEntries(await Promise.all(Object.entries(dependencies).map(async ([name, url]) => {
+    try {
+      const result = await fetch(`${url}/health`, { signal: AbortSignal.timeout(2_000) });
+      return [name, result.ok ? 'UP' : 'DOWN'];
+    } catch {
+      return [name, 'DOWN'];
+    }
+  }))) as Record<string, 'UP' | 'DOWN'>;
+  const status = Object.values(checks).every((value) => value === 'UP') ? 'UP' : 'DOWN';
+  response.status(status === 'UP' ? 200 : 503).json({ status, service: 'api-gateway', checks });
 });
 
 app.use(createAuthGuard(security));
@@ -63,7 +127,7 @@ app.use((request, response) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`API Gateway listening on port ${port}`);
+  log('info', 'API Gateway started', { port });
 });
 
 function createServiceProxy(path: string, target: string): RequestHandler {
@@ -72,14 +136,24 @@ function createServiceProxy(path: string, target: string): RequestHandler {
     changeOrigin: true,
     pathFilter: path,
     on: {
+      proxyReq: (proxyRequest) => {
+        const headers: Record<string, string> = {};
+        propagation.inject(context.active(), headers);
+        for (const [name, value] of Object.entries(headers)) proxyRequest.setHeader(name, value);
+      },
       error: (error, request, response) => {
-        console.error(`Upstream unavailable for ${request.url}: ${error.message}`);
+        log('error', 'Upstream unavailable', { path: request.url, errorType: error.name });
         sendUnavailable(response, request.url ?? '/');
       },
     },
   };
 
   return createProxyMiddleware(options) as RequestHandler;
+}
+
+function log(level: 'info' | 'error', message: string, fields: Record<string, unknown>): void {
+  const spanContext = trace.getSpan(context.active())?.spanContext();
+  console.log(JSON.stringify({ timestamp: new Date().toISOString(), level, service: 'api-gateway', message, context: fields, traceId: spanContext?.traceId ?? null }));
 }
 
 function sendUnavailable(response: unknown, path: string): void {
@@ -104,6 +178,10 @@ function requireSecret(value: string | undefined): string {
   if (!value) throw new Error('Falta la variable de entorno JWT_SECRET');
   if (value.length < 16) throw new Error('JWT_SECRET debe tener al menos 16 caracteres');
   return value;
+}
+
+function readSecretFile(path: string | undefined): string | undefined {
+  return path ? readFileSync(path, 'utf8').trim() : undefined;
 }
 
 function requireUrl(value: string | undefined, name: string): string {
