@@ -33,6 +33,7 @@ pipeline {
     stage('Publish') { steps { sh 'docker tag "$IMAGE:$IMAGE_TAG" "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker tag "$IMAGE:latest" "$RHM_REGISTRY/$IMAGE:latest"; docker push "$RHM_REGISTRY/$IMAGE:$IMAGE_TAG"; docker push "$RHM_REGISTRY/$IMAGE:latest"' } }
     stage('E2E Tests') {
       when { expression { params.RUN_E2E } }
+      options { lock(resource: 'rhm-e2e-stack', inversePrecedence: true) }
       environment { COMPOSE_PROJECT_NAME = "rhm-e2e-${env.SERVICE}"; COMPOSE_FILE = 'docker-compose.yml:ci/docker-compose.e2e.yml:../service-under-test.yml'; E2E_ADMIN = credentials('e2e-admin') }
       steps {
         dir('.e2e') { deleteDir() }
