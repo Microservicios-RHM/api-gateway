@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
 import swaggerUi from 'swagger-ui-express';
-import { Counter, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 import { context, propagation, SpanKind, trace } from '@opentelemetry/api';
 import { startTelemetry } from './telemetry.ts';
 import { createAuthGuard } from './security.ts';
@@ -42,10 +42,14 @@ const app = express();
 const metricsRegistry = new Registry();
 collectDefaultMetrics({ register: metricsRegistry, prefix: 'rhm_gateway_' });
 const httpRequests = new Counter({
-  name: 'http_requests_total',
+  name: 'rhm_http_requests_total',
   help: 'Total HTTP requests handled by the Gateway',
   labelNames: ['service', 'method', 'status'] as const,
   registers: [metricsRegistry],
+});
+const httpDuration = new Histogram({
+  name: 'rhm_http_request_duration_seconds', help: 'HTTP request duration in seconds',
+  labelNames: ['service', 'method', 'status'] as const, registers: [metricsRegistry],
 });
 
 app.disable('x-powered-by');
@@ -65,7 +69,13 @@ app.use((request, response, next) => {
   );
 });
 app.use((request, response, next) => {
-  response.on('finish', () => httpRequests.inc({ service: 'api-gateway', method: request.method, status: String(response.statusCode) }));
+  const end = httpDuration.startTimer({ service: 'api-gateway', method: request.method });
+  response.on('finish', () => {
+    const labels = { service: 'api-gateway', method: request.method, status: String(response.statusCode) };
+    httpRequests.inc(labels);
+    end({ status: labels.status });
+    log(response.statusCode >= 500 ? 'error' : 'info', 'HTTP request completed', labels);
+  });
   next();
 });
 app.get('/metrics', async (_request, response) => {
@@ -117,7 +127,7 @@ app.use((request, response) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`API Gateway listening on port ${port}`);
+  log('info', 'API Gateway started', { port });
 });
 
 function createServiceProxy(path: string, target: string): RequestHandler {
@@ -132,13 +142,18 @@ function createServiceProxy(path: string, target: string): RequestHandler {
         for (const [name, value] of Object.entries(headers)) proxyRequest.setHeader(name, value);
       },
       error: (error, request, response) => {
-        console.error(`Upstream unavailable for ${request.url}: ${error.message}`);
+        log('error', 'Upstream unavailable', { path: request.url, errorType: error.name });
         sendUnavailable(response, request.url ?? '/');
       },
     },
   };
 
   return createProxyMiddleware(options) as RequestHandler;
+}
+
+function log(level: 'info' | 'error', message: string, fields: Record<string, unknown>): void {
+  const spanContext = trace.getSpan(context.active())?.spanContext();
+  console.log(JSON.stringify({ timestamp: new Date().toISOString(), level, service: 'api-gateway', message, context: fields, traceId: spanContext?.traceId ?? null }));
 }
 
 function sendUnavailable(response: unknown, path: string): void {
