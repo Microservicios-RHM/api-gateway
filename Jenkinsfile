@@ -6,6 +6,7 @@ pipeline {
   environment { SERVICE = 'api-gateway'; COMPOSE_SERVICE = 'api-gateway'; IMAGE = 'rhm/api-gateway' }
   stages {
     stage('Checkout') { steps { checkout scm; script { env.IMAGE_TAG = "${env.BUILD_NUMBER}-${sh(script: 'git rev-parse --short=7 HEAD', returnStdout: true).trim()}" } } }
+    stage('Secret scan') { steps { sh 'docker run --rm --volumes-from "$HOSTNAME" zricethezav/gitleaks:v8.24.0 detect --source "$PWD" --no-git --redact' } }
     stage('Build') {
       agent { docker { image 'node:24-alpine'; reuseNode true } }
       steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run typecheck'; sh 'npm run build' }
@@ -15,7 +16,6 @@ pipeline {
       steps { sh 'npm ci --no-audit --no-fund'; sh 'npm run test:ci' }
       post { always { junit testResults: 'reports/junit.xml', allowEmptyResults: false; archiveArtifacts artifacts: 'reports/lcov.info', allowEmptyArchive: false } }
     }
-    stage('Secret scan') { steps { sh 'docker run --rm --volumes-from "$HOSTNAME" zricethezav/gitleaks:v8.24.0 detect --source "$PWD" --no-git --redact' } }
     stage('Dependency scan') {
       steps { sh 'mkdir -p reports/security; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity HIGH,CRITICAL --exit-code 0 --format json --output "$PWD/reports/security/dependencies.json" "$PWD"; docker run --rm --volumes-from "$HOSTNAME" -v "trivy-cache-$SERVICE:/root/.cache/trivy" aquasec/trivy:0.76.2 fs --scanners vuln --severity CRITICAL --ignore-unfixed --exit-code 1 --no-progress "$PWD"' }
       post { always { archiveArtifacts artifacts: 'reports/security/dependencies.json', allowEmptyArchive: false } }
