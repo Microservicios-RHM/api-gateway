@@ -11,7 +11,7 @@ export function startTelemetry(): void {
   telemetry = new NodeSDK({
     resource: resourceFromAttributes({ 'service.name': 'api-gateway' }),
     traceExporter: new OTLPTraceExporter({
-      url: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? 'http://jaeger:4318/v1/traces',
+      url: process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT ?? 'https://jaeger:4318/v1/traces',
     }),
     instrumentations: [getNodeAutoInstrumentations()],
   });
