@@ -2,6 +2,9 @@ import express, { type RequestHandler, type Response } from 'express';
 import { createProxyMiddleware, type Options } from 'http-proxy-middleware';
 import { createAuthGuard } from './security.ts';
 import { sendErrorResponse } from './responses.ts';
+import { createHealthHandler, upstreamHealthCheck } from './observability/health.ts';
+import { createLogger } from './observability/logger.ts';
+import { createHttpMetrics, createPrefixLabeler } from './observability/metrics.ts';
 
 const port = parsePort(process.env.PORT);
 const empleadosServiceUrl = requireUrl(
@@ -30,16 +33,35 @@ const security = {
   issuer: process.env.JWT_ISSUER ?? 'auth-service',
 };
 
+const serviceName = process.env.OTEL_SERVICE_NAME ?? 'api-gateway';
+const logger = createLogger();
+const upstreams = {
+  'auth-service': authServiceUrl,
+  'empleados-service': empleadosServiceUrl,
+  'departamentos-service': departamentosServiceUrl,
+  'notificaciones-service': notificacionesServiceUrl,
+  'perfiles-service': perfilesServiceUrl,
+  'vacaciones-service': vacacionesServiceUrl,
+};
+const proxiedPrefixes = ['/auth', '/empleados', '/departamentos', '/notificaciones', '/perfiles', '/vacaciones'];
+const metrics = createHttpMetrics(serviceName, true, createPrefixLabeler(proxiedPrefixes));
+
 const app = express();
 
 app.disable('x-powered-by');
-app.get('/health', (_request, response) => {
-  response.status(200).json({
-    success: true,
-    message: 'API Gateway disponible',
-    data: { status: 'UP' },
-  });
-});
+// Reto 8: métricas de todas las peticiones del cliente, incluidas las rechazadas por el guard
+// (401/403) y las reenviadas. /metrics y /health quedan fuera del guard JWT: los consultan
+// Prometheus y Docker dentro de la red interna.
+app.use(metrics.middleware);
+app.get('/metrics', metrics.handler);
+app.get(
+  '/health',
+  createHealthHandler(
+    serviceName,
+    Object.fromEntries(Object.entries(upstreams).map(([name, url]) => [name, upstreamHealthCheck(url)])),
+    'any',
+  ),
+);
 
 app.use(createAuthGuard(security));
 
@@ -63,7 +85,7 @@ app.use((request, response) => {
 });
 
 app.listen(port, '0.0.0.0', () => {
-  console.log(`API Gateway listening on port ${port}`);
+  logger.info({ port }, 'API Gateway listening');
 });
 
 function createServiceProxy(path: string, target: string): RequestHandler {
@@ -73,7 +95,7 @@ function createServiceProxy(path: string, target: string): RequestHandler {
     pathFilter: path,
     on: {
       error: (error, request, response) => {
-        console.error(`Upstream unavailable for ${request.url}: ${error.message}`);
+        logger.error({ path: request.url, err: error.message }, 'Upstream unavailable');
         sendUnavailable(response, request.url ?? '/');
       },
     },
